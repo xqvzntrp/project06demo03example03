@@ -1,0 +1,367 @@
+#+TITLE: Project C SQL Domains
+#+AUTHOR: OpenAI
+#+OPTIONS: toc:2 num:nil
+#+STARTUP: overview
+
+* Purpose
+
+This document explains the shared idea behind three standalone SQL domain files:
+
+- =task_domain.sql=
+- =approval_domain.sql=
+- =order_domain.sql=
+
+Each file demonstrates the same architectural pattern in a different domain.
+
+The point is not the specific business domain.
+The point is the *shape* of the system.
+
+The shared pattern is:
+
+#+begin_example
+history -> derived state -> derived actions -> chosen action -> new history
+#+end_example
+
+Or more compactly:
+
+#+begin_example
+events -> state view -> actions view -> write procedure
+#+end_example
+
+
+* Core Idea
+
+Project C treats *history* as the source of truth.
+
+The database does not store mutable "current state" as the authoritative model.
+Instead, it stores *events* and derives everything else from them.
+
+This means:
+
+- facts are appended
+- state is reconstructed
+- available actions are computed from current meaning
+- writes append new events instead of mutating existing rows
+
+The result is a system where correctness is enforced by structure rather than by scattered validation logic.
+
+
+* The Shared SQL Pattern
+
+Each standalone SQL file follows the same conceptual structure.
+
+** 1. Events Table
+
+The events table is the canonical source of truth.
+
+It stores immutable facts such as:
+
+- task defined
+- participant approved
+- order shipped
+
+The table is append-oriented.
+In the conceptual model, events are not updated in place.
+
+** 2. State View
+
+The state view derives current meaning from event history.
+
+This is the SQL equivalent of a projector.
+
+Examples:
+
+- in tasks, it derives whether a task is blocked or unblocked
+- in approvals, it derives whether a participant is pending, approved, or rejected
+- in orders, it derives whether an order is new, paid, shipped, delivered, or cancelled
+
+The state view answers:
+
+#+begin_example
+What is true now, given the full history?
+#+end_example
+
+** 3. Actions View
+
+The actions view derives what is valid *next*.
+
+This is a crucial part of the model.
+
+Instead of exposing every possible command and rejecting invalid ones later,
+the system computes only the actions that are currently valid.
+
+The actions view answers:
+
+#+begin_example
+What can be done now, given the current state?
+#+end_example
+
+** 4. Write Procedures
+
+Write procedures enforce correctness and append a new event.
+
+They do not directly mutate state.
+
+They:
+
+- check whether the requested transition is valid
+- reject invalid requests
+- insert a new event when valid
+
+This preserves the central rule:
+
+#+begin_example
+state changes by appending history, not by overwriting state
+#+end_example
+
+
+* Why This Matters
+
+This pattern changes where system meaning lives.
+
+In many systems:
+
+- state is primary
+- requests are accepted first
+- validation is scattered
+- invalid actions are often exposed and rejected late
+
+In this pattern:
+
+- history is primary
+- state is derived
+- actions are derived
+- invalid actions do not need to appear in the first place
+
+That makes the system:
+
+- more auditable
+- easier to reason about
+- more deterministic
+- less dependent on duplicated validation logic
+
+
+* The Three Example Domains
+
+** Task Domain
+
+File:
+- =task_domain.sql=
+
+This domain demonstrates dependency-driven availability.
+
+Example idea:
+
+- task C depends on A and B
+- C is not available until A and B are complete
+
+This domain shows that the pattern works for *graph-like dependency logic*.
+
+What it proves:
+
+- state can be derived from events
+- action availability can depend on relationships between entities
+- progressive unlocking can be modeled cleanly in SQL
+
+Core question answered by this domain:
+
+#+begin_example
+Can the system derive actions from dependency structure?
+#+end_example
+
+Answer:
+Yes.
+
+** Approval Domain
+
+File:
+- =approval_domain.sql=
+
+This domain demonstrates participant-scoped actions and aggregate outcomes.
+
+Example idea:
+
+- Alice and Bob are participants
+- either can approve or reject
+- one rejection makes the whole approval rejected
+- all approvals make it approved
+
+This domain shows that the pattern works for *aggregation, scoping, and terminal states*.
+
+What it proves:
+
+- available actions can be participant-specific
+- overall meaning can depend on aggregate history
+- terminal conditions can be replay-derived
+
+Core question answered by this domain:
+
+#+begin_example
+Can the system derive scoped actions from shared state?
+#+end_example
+
+Answer:
+Yes.
+
+** Order Domain
+
+File:
+- =order_domain.sql=
+
+This domain demonstrates sequential lifecycle transitions.
+
+Example idea:
+
+- NEW -> PAID -> SHIPPED -> DELIVERED
+- cancel is only valid before shipping
+
+This domain shows that the pattern works for *ordered transitions and irreversible state changes*.
+
+What it proves:
+
+- classic lifecycle modeling fits the same structure
+- action availability can depend on current phase
+- multiple terminal outcomes can be represented clearly
+
+Core question answered by this domain:
+
+#+begin_example
+Can the system model sequential business workflows?
+#+end_example
+
+Answer:
+Yes.
+
+
+* What The Three Domains Show Together
+
+Taken together, the three domains cover three different shapes of stateful logic:
+
+- tasks -> dependency graph
+- approvals -> aggregate participant state
+- orders -> sequential lifecycle
+
+This matters because it shows that the pattern is *not tied to one kind of domain*.
+
+It generalizes across:
+
+- graph-based logic
+- set / aggregation logic
+- sequence / lifecycle logic
+
+That is the real significance of the examples.
+
+They do not just demonstrate three apps.
+They demonstrate one reusable architectural pattern.
+
+
+* Single Conceptual Model
+
+All three domains reduce to the same conceptual loop:
+
+#+begin_example
+history -> state -> actions -> event -> history
+#+end_example
+
+A more detailed reading is:
+
+1. append facts to history
+2. derive the current state from history
+3. derive the valid actions from that state
+4. choose one valid action
+5. append the resulting event
+6. repeat
+
+Only two things vary by domain:
+
+- how state is derived
+- how actions are derived
+
+Everything else stays structurally the same.
+
+
+* Why The SQL Version Is Useful
+
+The SQL examples are valuable because they prove that the core idea can live directly in the database.
+
+That means the database is not just passive storage.
+It becomes the place where:
+
+- truth is reconstructed
+- valid actions are exposed
+- correctness is enforced
+
+This is especially useful in environments like Oracle APEX, where:
+
+- pages can read directly from views
+- buttons can call stored procedures
+- the app layer can remain thin
+
+In that setup, the UI becomes a presentation surface for meaning that already exists in SQL.
+
+
+* What These Files Are Not
+
+These files are not trying to be:
+
+- a complete framework
+- a generic multi-domain engine
+- a final production platform
+
+They are intended to be:
+
+- standalone domain demonstrations
+- clear examples of a reusable modeling pattern
+- small proofs that the same structure works across different problems
+
+
+* Practical Usage
+
+A practical way to use these files is:
+
+1. run a single file in Oracle APEX SQL Workshop
+2. inspect the state view
+3. inspect the actions view
+4. call the write procedures
+5. observe how state changes only by appended history
+
+This makes each domain easy to demo independently.
+
+It also keeps the examples readable.
+That is why the domains are better kept as separate files for now rather than merged into one multi-domain schema.
+
+
+* Recommended File Set
+
+A clean directory layout would be:
+
+#+begin_example
+project-c-sql/
+  task_domain.sql
+  approval_domain.sql
+  order_domain.sql
+  project_c_sql_domains.org
+#+end_example
+
+This keeps the examples:
+
+- standalone
+- comparable
+- easy to explain
+
+
+* Final Takeaway
+
+The main lesson of these three SQL files is simple:
+
+#+begin_quote
+Different domains can share the same architecture even when their business rules are very different.
+#+end_quote
+
+The reusable pattern is:
+
+#+begin_example
+events -> derived state -> derived actions -> enforced append
+#+end_example
+
+That is the core idea these files are meant to carry.
